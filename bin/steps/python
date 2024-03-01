@@ -1,96 +1,92 @@
 #!/usr/bin/env bash
 
-set +e
-runtime-fixer runtime.txt
+# TODO: Replace runtime-fixer with a bash equivalent, since currently on rebuilds it
+# gets run with the cached Python install (rather than system Python), which means it
+# fails to run with glibc errors on stack downgrades (see spec/hatchet/stack_spec.rb).
+# To work around this for now, non-zero exit codes are ignored (most runtime.txt files
+# don't need fixing up, so the script not running won't normally matter).
+runtime-fixer runtime.txt || true
 PYTHON_VERSION=$(cat runtime.txt)
 
 # The location of the pre-compiled python binary.
-VENDORED_PYTHON="${S3_BASE_URL}/${STACK}/runtimes/${PYTHON_VERSION}.tar.gz"
+PYTHON_URL="${S3_BASE_URL}/${STACK}/runtimes/${PYTHON_VERSION}.tar.gz"
 
-SECURITY_UPDATE="Python has released a security update! Please consider upgrading to"
-SECURITY_UPDATE_PYPY="The PyPy project has released a security update! Please consider upgrading to"
-
-ONLY_SUPPORTED_2_VERSION="Only the latest version of Python 2 is supported on the platform. Please consider upgrading to"
-
-PYTHON_2_EOL_UPDATE="Python 2 has reached its community EOL. Upgrade your Python runtime to maintain a secure application as soon as possible."
-
-# check if runtime exists
-if curl --output /dev/null --silent --head --fail "$VENDORED_PYTHON"; then
-  if [[ "$PYTHON_VERSION" == $PY310* ]]; then
-    if [ "$PYTHON_VERSION" != "$LATEST_310" ]; then
-      puts-warn "$SECURITY_UPDATE" "$LATEST_310"
-      echo "       Learn More: https://devcenter.heroku.com/articles/python-runtimes"
-    fi
-  fi
-  if [[ "$PYTHON_VERSION" == $PY39* ]]; then
-    if [ "$PYTHON_VERSION" != "$LATEST_39" ]; then
-      puts-warn "$SECURITY_UPDATE" "$LATEST_39"
-      echo "       Learn More: https://devcenter.heroku.com/articles/python-runtimes"
-    fi
-  fi
-  if [[ "$PYTHON_VERSION" == $PY38* ]]; then
-    # do things to alert the user of security release available
-    if [ "$PYTHON_VERSION" != "$LATEST_38" ]; then
-      puts-warn "$SECURITY_UPDATE" "$LATEST_38"
-      echo "       Learn More: https://devcenter.heroku.com/articles/python-runtimes"
-    fi
-  fi
-  if [[ "$PYTHON_VERSION" == $PY37* ]]; then
-    # do things to alert the user of security release available
-    if [ "$PYTHON_VERSION" != "$LATEST_37" ]; then
-      puts-warn "$SECURITY_UPDATE" "$LATEST_37"
-      echo "       Learn More: https://devcenter.heroku.com/articles/python-runtimes"
-    fi
-  fi
-  if [[ "$PYTHON_VERSION" == $PY36* ]]; then
-    # security update note
-    if [ "$PYTHON_VERSION" != "$LATEST_36" ]; then
-      puts-warn "$SECURITY_UPDATE" "$LATEST_36"
-      echo "       Learn More: https://devcenter.heroku.com/articles/python-runtimes"
-    fi
-  fi
-  if [[ "$PYTHON_VERSION" == $PY35* ]]; then
-    # security update note
-    if [ "$PYTHON_VERSION" != "$LATEST_35" ]; then
-      puts-warn "$SECURITY_UPDATE" "$LATEST_35"
-      echo "       Learn More: https://devcenter.heroku.com/articles/python-runtimes"
-    fi
-  fi
-  if [[ "$PYTHON_VERSION" == $PY34* ]]; then
-    # security update note
-    if [ "$PYTHON_VERSION" != "$LATEST_34" ]; then
-      puts-warn "$SECURITY_UPDATE" "$LATEST_34"
-      echo "       Learn More: https://devcenter.heroku.com/articles/python-runtimes"
-    fi
-  fi
-  if [[ "$PYTHON_VERSION" == $PY27* ]]; then
-    puts-warn "$PYTHON_2_EOL_UPDATE"
-    echo "       Learn More: https://devcenter.heroku.com/articles/python-2-7-eol-faq"
-    # security update note
-    if [ "$PYTHON_VERSION" != "$LATEST_27" ]; then
-      puts-warn "$ONLY_SUPPORTED_2_VERSION" "$LATEST_27"
-      echo "       Learn More: https://devcenter.heroku.com/articles/python-runtimes"
-    fi
-  fi
-  if [[ "$PYTHON_VERSION" == $PYPY27* ]]; then
-    # security update note
-    if [ "$PYTHON_VERSION" != "$LATEST_PYPY_27" ]; then
-      puts-warn "$SECURITY_UPDATE_PYPY" "$LATEST_PYPY_27"
-      echo "       Learn More: https://devcenter.heroku.com/articles/python-runtimes"
-    fi
-  fi
-  if [[ "$PYTHON_VERSION" == $PYPY36* ]]; then
-    # security update note
-    if [ "$PYTHON_VERSION" != "$LATEST_PYPY_36" ]; then
-      puts-warn "$SECURITY_UPDATE_PYPY" "$LATEST_PYPY_36"
-      echo "       Learn More: https://devcenter.heroku.com/articles/python-runtimes"
-    fi
-  fi
-else
-  puts-warn "Requested runtime ($PYTHON_VERSION) is not available for this stack ($STACK)."
-  puts-warn "Aborting.  More info: https://devcenter.heroku.com/articles/python-support"
+if ! curl --output /dev/null --silent --head --fail --retry 3 --retry-connrefused --connect-timeout 10 "${PYTHON_URL}"; then
+  puts-warn "Requested runtime '${PYTHON_VERSION}' is not available for this stack (${STACK})."
+  puts-warn "For supported versions, see: https://devcenter.heroku.com/articles/python-support"
   exit 1
 fi
+
+function eol_python_version_error() {
+  local major_version="${1}"
+  local eol_date="${2}"
+  puts-warn
+  puts-warn "Python ${major_version} reached upstream end-of-life on ${eol_date}, and is"
+  puts-warn "therefore no longer receiving security updates:"
+  puts-warn "https://devguide.python.org/versions/#supported-versions"
+  puts-warn
+  puts-warn "As such, it is no longer supported by the latest version of this buildpack."
+  puts-warn
+  puts-warn "Please upgrade to a newer Python version. See:"
+  puts-warn "https://devcenter.heroku.com/articles/python-runtimes"
+  puts-warn
+  exit 1
+}
+
+function warn_if_patch_update_available() {
+  local current_version="${1}"
+  local latest_patch_version="${2}"
+  if [[ "${current_version}" != "${latest_patch_version}" ]]; then
+    puts-warn
+    puts-warn "A Python security update is available! Upgrade as soon as possible to: ${latest_patch_version}"
+    puts-warn "See: https://devcenter.heroku.com/articles/python-runtimes"
+    puts-warn
+  fi
+}
+
+case "${PYTHON_VERSION}" in
+  python-3.12.*)
+    warn_if_patch_update_available "${PYTHON_VERSION}" "${LATEST_312}"
+    ;;
+  python-3.11.*)
+    warn_if_patch_update_available "${PYTHON_VERSION}" "${LATEST_311}"
+    ;;
+  python-3.10.*)
+    warn_if_patch_update_available "${PYTHON_VERSION}" "${LATEST_310}"
+    ;;
+  python-3.9.*)
+    warn_if_patch_update_available "${PYTHON_VERSION}" "${LATEST_39}"
+    ;;
+  python-3.8.*)
+    puts-warn
+    puts-warn "Python 3.8 will reach its upstream end-of-life in October 2024, at which"
+    puts-warn "point it will no longer receive security updates:"
+    puts-warn "https://devguide.python.org/versions/#supported-versions"
+    puts-warn
+    puts-warn "Support for Python 3.8 will be removed from this buildpack on December 4th, 2024."
+    puts-warn
+    puts-warn "Upgrade to a newer Python version as soon as possible to keep your app secure."
+    puts-warn "See: https://devcenter.heroku.com/articles/python-runtimes"
+    puts-warn
+    warn_if_patch_update_available "${PYTHON_VERSION}" "${LATEST_38}"
+    ;;
+  python-3.7.*)
+    eol_python_version_error "3.7" "June 27th, 2023"
+    ;;
+  python-3.6.*)
+    eol_python_version_error "3.6" "December 23rd, 2021"
+    ;;
+  pypy*)
+    puts-warn
+    puts-warn "PyPy is no longer supported by the latest version of this buildpack."
+    puts-warn
+    puts-warn "Please switch to one of the supported CPython versions by updating your"
+    puts-warn "runtime.txt file. See:"
+    puts-warn "https://devcenter.heroku.com/articles/python-support"
+    puts-warn
+    exit 1
+    ;;
+esac
 
 mcount "version.python.${PYTHON_VERSION}"
 
@@ -108,22 +104,26 @@ if [ -f .heroku/python-version ]; then
   fi
 fi
 
-# Check if we should reinstall python dependencies
-if [[ ! -f "$CACHE_DIR/.heroku/requirements.txt" ]]; then
-  # IF there's no cached dependencies, update cached version of requirements.txt
-  # This should only run for new apps and first deploys after this update
-  cp -R "$BUILD_DIR/requirements.txt" "$CACHE_DIR/.heroku/requirements.txt"
-else
-  # IF there IS a cached directory, check for differences with the new one
-  if ! diff "$BUILD_DIR/requirements.txt" "$CACHE_DIR/.heroku/requirements.txt" &> /dev/null; then
-    puts-step "Requirements file has been changed, clearing cached dependencies"
-    # if there are any differences, clear the Python cache
-    # Installing Python over again does not take noticably more time
+# If using Pip, check if we should reinstall python dependencies given that requirements.txt
+# is non-deterministic (not all packages pinned, doesn't handle uninstalls etc). We don't need
+# to do this when using Pipenv, since it has a lockfile and syncs the packages for us.
+if [[ -f "${BUILD_DIR}/requirements.txt" ]]; then
+  if [[ ! -f "$CACHE_DIR/.heroku/requirements.txt" ]]; then
+    # This is a the first build of an app (or the build cache was cleared). Since there
+    # are no cached packages, we only need to store the requirements file for next time.
     cp -R "$BUILD_DIR/requirements.txt" "$CACHE_DIR/.heroku/requirements.txt"
-    rm -rf .heroku/python
-    unset SKIP_INSTALL
   else
-    puts-step "No change in requirements detected, installing from cache"
+    # IF there IS a cached directory, check for differences with the new one
+    if ! diff "$BUILD_DIR/requirements.txt" "$CACHE_DIR/.heroku/requirements.txt" &> /dev/null; then
+      puts-step "Requirements file has been changed, clearing cached dependencies"
+      # if there are any differences, clear the Python cache
+      # Installing Python over again does not take noticably more time
+      cp -R "$BUILD_DIR/requirements.txt" "$CACHE_DIR/.heroku/requirements.txt"
+      rm -rf .heroku/python
+      unset SKIP_INSTALL
+    else
+      puts-step "No change in requirements detected, installing from cache"
+    fi
   fi
 fi
 
@@ -135,9 +135,10 @@ else
   # Prepare destination directory.
   mkdir -p .heroku/python
 
-  if ! curl "${VENDORED_PYTHON}" -s | tar zxv -C .heroku/python &> /dev/null; then
-    puts-warn "Requested runtime ($PYTHON_VERSION) is not available for this stack ($STACK)."
-    puts-warn "Aborting.  More info: https://devcenter.heroku.com/articles/python-support"
+  if ! curl --silent --show-error --fail --retry 3 --retry-connrefused --connect-timeout 10 "${PYTHON_URL}" | tar -zxC .heroku/python; then
+    # The Python version was confirmed to exist previously, so any failure here is due to
+    # a networking issue or archive/buildpack bug rather than the runtime not existing.
+    puts-warn "Failed to download/install ${PYTHON_VERSION}"
     exit 1
   fi
 
@@ -148,58 +149,29 @@ else
   hash -r
 fi
 
-set -e
-
-PIP_VERSION='22.0.4'
-SETUPTOOLS_VERSION='60.10.0'
-WHEEL_VERSION='0.37.1'
-
-if [[ "${PYTHON_VERSION}" == ${PY34}* ]]; then
-  # Python 3.4 support was dropped in pip 19.2+, setuptools 44+ and wheel 0.34+.
-  PIP_VERSION='19.1.1'
-  SETUPTOOLS_VERSION='43.0.0'
-  WHEEL_VERSION='0.33.6'
-elif [[ "${PYTHON_VERSION}" == ${PY27}* || "${PYTHON_VERSION}" == ${PYPY27}* ]]; then
-  # Python 2.7 support was dropped in pip 21+ and setuptools 45+.
-  PIP_VERSION='20.3.4'
-  SETUPTOOLS_VERSION='44.1.1'
-elif [[ "${PYTHON_VERSION}" == ${PY35}* ]]; then
-  # Python 3.5 support was dropped in pip 21+ and setuptools 51+.
-  PIP_VERSION='20.3.4'
-  SETUPTOOLS_VERSION='50.3.2'
-elif [[ "${PYTHON_VERSION}" == ${PY36}* || "${PYTHON_VERSION}" == ${PYPY36}* ]]; then
-  # Python 3.6 support was dropped in pip 22+ and setuptools 59.7.0+.
-  PIP_VERSION='21.3.1'
-  SETUPTOOLS_VERSION='59.6.0'
-fi
+PIP_VERSION=$(get_requirement_version 'pip')
+SETUPTOOLS_VERSION=$(get_requirement_version 'setuptools')
+WHEEL_VERSION=$(get_requirement_version 'wheel')
 
 puts-step "Installing pip ${PIP_VERSION}, setuptools ${SETUPTOOLS_VERSION} and wheel ${WHEEL_VERSION}"
 
-# We don't use get-pip.py, since:
-#  - it uses `--force-reinstall`, which is unnecessary here and slows down repeat builds
-#  - it means downloading pip twice (once embedded in get-pip.py, and again during
-#    the install, since get-pip.py can't install the embedded version directly)
-#  - we would still have to manage several versions of get-pip.py, to support older Pythons.
-# Instead, we use the pip wheel to install itself, using the method described here:
-# https://github.com/pypa/pip/issues/2351#issuecomment-69994524
+# Python bundles Pip within its standard library, which we can use to install our chosen
+# pip version from PyPI, saving us from having to download the usual pip bootstrap script.
+# We have to use a glob since the bundled wheel filename contains the pip version, which
+# differs between Python versions. We also have to handle the case where there are multiple
+# matching pip wheels, since in some versions of Python (eg 3.9.0) multiple versions of pip
+# were accidentally bundled upstream. Note: This implementation relies upon `nullglob` being
+# set, which is the case thanks to the `bin/utils` that was run earlier.
+BUNDLED_PIP_WHEEL_LIST=(.heroku/python/lib/python*/ensurepip/_bundled/pip-*.whl)
+BUNDLED_PIP_WHEEL="${BUNDLED_PIP_WHEEL_LIST[0]}"
 
-PIP_MAJOR_VERSION="${PIP_VERSION%%.*}"
-if [[ "${PIP_MAJOR_VERSION}" -ge 21 ]]; then
-  # Pip 21+ dropped support for Python 2, so no longer uses universal wheels.
-  PIP_WHEEL_FILENAME="pip-${PIP_VERSION}-py3-none-any.whl"
-else
-  PIP_WHEEL_FILENAME="pip-${PIP_VERSION}-py2.py3-none-any.whl"
-fi
-PIP_WHEEL_URL="${S3_BASE_URL}/common/${PIP_WHEEL_FILENAME}"
-PIP_WHEEL="${TMPDIR:-/tmp}/${PIP_WHEEL_FILENAME}"
-
-if ! curl -sSf "${PIP_WHEEL_URL}" -o "$PIP_WHEEL"; then
-  mcount "failure.python.download-pip"
-  puts-warn "Failed to download pip"
+if [[ -z "${BUNDLED_PIP_WHEEL}" ]]; then
+  mcount "failure.python.locate-bundled-pip-wheel"
+  puts-warn "Failed to locate the bundled pip wheel"
   exit 1
 fi
 
-/app/.heroku/python/bin/python "${PIP_WHEEL}/pip" install --quiet --disable-pip-version-check --no-cache \
-  "${PIP_WHEEL}" "setuptools==${SETUPTOOLS_VERSION}" "wheel==${WHEEL_VERSION}"
+/app/.heroku/python/bin/python "${BUNDLED_PIP_WHEEL}/pip" install --quiet --disable-pip-version-check --no-cache-dir \
+  "pip==${PIP_VERSION}" "setuptools==${SETUPTOOLS_VERSION}" "wheel==${WHEEL_VERSION}"
 
 hash -r

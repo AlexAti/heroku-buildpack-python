@@ -9,8 +9,8 @@ RSpec.describe 'Stack changes' do
     # can successfully read the stack metadata written to the build cache in the past.
     # The buildpack version chosen is one which had an older default Python version, so
     # we can also prove that clearing the cache didn't lose the Python version metadata.
-    let(:buildpacks) { ['https://github.com/heroku/heroku-buildpack-python#v209'] }
-    let(:app) { Hatchet::Runner.new('spec/fixtures/python_version_unspecified', buildpacks: buildpacks) }
+    let(:buildpacks) { ['https://github.com/heroku/heroku-buildpack-python#v213'] }
+    let(:app) { Hatchet::Runner.new('spec/fixtures/python_version_unspecified', buildpacks:) }
 
     it 'clears the cache before installing again whilst preserving the sticky Python version' do
       app.deploy do |app|
@@ -22,15 +22,19 @@ RSpec.describe 'Stack changes' do
         # TODO: The requirements output shouldn't say "installing from cache", since it's not.
         expect(clean_output(app.output)).to include(<<~OUTPUT)
           remote: -----> Python app detected
-          remote: -----> No Python version was specified. Using the same version as the last build: python-3.10.4
+          remote: -----> No Python version was specified. Using the same version as the last build: python-3.10.5
           remote:        To use a different version, see: https://devcenter.heroku.com/articles/python-runtimes
+          remote:  !     
+          remote:  !     A Python security update is available! Upgrade as soon as possible to: python-#{LATEST_PYTHON_3_10}
+          remote:  !     See: https://devcenter.heroku.com/articles/python-runtimes
+          remote:  !     
           remote: -----> Stack has changed from heroku-20 to heroku-22, clearing cache
           remote: -----> No change in requirements detected, installing from cache
-          remote: -----> Installing python-3.10.4
-          remote: -----> Installing pip 22.0.4, setuptools 60.10.0 and wheel 0.37.1
+          remote: -----> Installing python-3.10.5
+          remote: -----> Installing pip #{PIP_VERSION}, setuptools #{SETUPTOOLS_VERSION} and wheel #{WHEEL_VERSION}
           remote: -----> Installing SQLite3
           remote: -----> Installing requirements with pip
-          remote:        Collecting urllib3
+          remote:        Collecting urllib3 (from -r requirements.txt (line 1))
         OUTPUT
       end
     end
@@ -52,17 +56,17 @@ RSpec.describe 'Stack changes' do
           remote: -----> No Python version was specified. Using the same version as the last build: python-#{DEFAULT_PYTHON_VERSION}
           remote:        To use a different version, see: https://devcenter.heroku.com/articles/python-runtimes
           remote: python: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.34' not found (required by python)
-          remote: python: /lib/x86_64-linux-gnu/libm.so.6: version `GLIBC_2.35' not found (required by /app/.heroku/python/lib/libpython3.10.so.1.0)
-          remote: python: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.33' not found (required by /app/.heroku/python/lib/libpython3.10.so.1.0)
-          remote: python: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.32' not found (required by /app/.heroku/python/lib/libpython3.10.so.1.0)
-          remote: python: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.34' not found (required by /app/.heroku/python/lib/libpython3.10.so.1.0)
+          remote: python: /lib/x86_64-linux-gnu/libm.so.6: version `GLIBC_2.35' not found (required by /app/.heroku/python/lib/libpython3.12.so.1.0)
+          remote: python: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.33' not found (required by /app/.heroku/python/lib/libpython3.12.so.1.0)
+          remote: python: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.32' not found (required by /app/.heroku/python/lib/libpython3.12.so.1.0)
+          remote: python: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.34' not found (required by /app/.heroku/python/lib/libpython3.12.so.1.0)
           remote: -----> Stack has changed from heroku-22 to heroku-20, clearing cache
           remote: -----> No change in requirements detected, installing from cache
           remote: -----> Installing python-#{DEFAULT_PYTHON_VERSION}
-          remote: -----> Installing pip 22.0.4, setuptools 60.10.0 and wheel 0.37.1
+          remote: -----> Installing pip #{PIP_VERSION}, setuptools #{SETUPTOOLS_VERSION} and wheel #{WHEEL_VERSION}
           remote: -----> Installing SQLite3
           remote: -----> Installing requirements with pip
-          remote:        Collecting urllib3
+          remote:        Collecting urllib3 (from -r requirements.txt (line 1))
         OUTPUT
       end
     end
